@@ -6,7 +6,7 @@ namespace Holons;
 
 /// <summary>
 /// URI-based listener factory for gRPC servers.
-/// Supported: tcp://, unix://, stdio://, mem://
+/// Supported: tcp://, unix://, stdio://, mem://, ws://, wss://
 /// </summary>
 public static class Transport
 {
@@ -20,23 +20,130 @@ public static class Transport
         return idx >= 0 ? uri[..idx] : uri;
     }
 
-    /// <summary>Parse a transport URI and return a bound TcpListener.</summary>
-    public static TcpListener Listen(string uri)
-    {
-        if (uri.StartsWith("tcp://"))
-            return ListenTcp(uri[6..]);
+    public record ParsedUri(
+        string Raw,
+        string Scheme,
+        string? Host = null,
+        int? Port = null,
+        string? Path = null,
+        bool Secure = false
+    );
 
-        throw new ArgumentException($"unsupported transport URI: {uri}");
+    public abstract record TransportListener
+    {
+        public sealed record Tcp(TcpListener Socket) : TransportListener;
+        public sealed record Stdio : TransportListener;
+        public sealed record Mem : TransportListener;
+        public sealed record Ws(string Host, int Port, string Path, bool Secure) : TransportListener;
     }
 
-    private static TcpListener ListenTcp(string addr)
+    /// <summary>Parse a transport URI into a normalized structure.</summary>
+    public static ParsedUri ParseUri(string uri)
     {
-        var lastColon = addr.LastIndexOf(':');
-        string host = lastColon > 0 ? addr[..lastColon] : "0.0.0.0";
-        int port = int.Parse(addr[(lastColon + 1)..]);
+        var s = Scheme(uri);
+        switch (s)
+        {
+            case "tcp":
+                if (!uri.StartsWith("tcp://", StringComparison.Ordinal))
+                    throw new ArgumentException($"invalid tcp URI: {uri}");
+                var tcp = SplitHostPort(uri[6..], 9090);
+                return new ParsedUri(uri, "tcp", tcp.host, tcp.port);
 
-        var listener = new TcpListener(IPAddress.Parse(host), port);
+            case "unix":
+                if (!uri.StartsWith("unix://", StringComparison.Ordinal))
+                    throw new ArgumentException($"invalid unix URI: {uri}");
+                var unixPath = uri[7..];
+                if (string.IsNullOrEmpty(unixPath))
+                    throw new ArgumentException($"invalid unix URI: {uri}");
+                return new ParsedUri(uri, "unix", Path: unixPath);
+
+            case "stdio":
+                return new ParsedUri("stdio://", "stdio");
+
+            case "mem":
+                return new ParsedUri(uri.StartsWith("mem://", StringComparison.Ordinal) ? uri : "mem://", "mem");
+
+            case "ws":
+            case "wss":
+                var secure = s == "wss";
+                var prefix = secure ? "wss://" : "ws://";
+                if (!uri.StartsWith(prefix, StringComparison.Ordinal))
+                    throw new ArgumentException($"invalid ws URI: {uri}");
+
+                var trimmed = uri[prefix.Length..];
+                var slash = trimmed.IndexOf('/');
+                var addr = slash >= 0 ? trimmed[..slash] : trimmed;
+                var path = slash >= 0 ? trimmed[slash..] : "/grpc";
+                if (string.IsNullOrEmpty(path))
+                    path = "/grpc";
+
+                var ws = SplitHostPort(addr, secure ? 443 : 80);
+                return new ParsedUri(uri, s, ws.host, ws.port, path, secure);
+
+            default:
+                throw new ArgumentException($"unsupported transport URI: {uri}");
+        }
+    }
+
+    /// <summary>Parse a transport URI and create a listener variant.</summary>
+    public static TransportListener Listen(string uri)
+    {
+        var parsed = ParseUri(uri);
+        return parsed.Scheme switch
+        {
+            "tcp" => new TransportListener.Tcp(ListenTcp(parsed)),
+            "unix" => throw new NotSupportedException(
+                "unix:// requires a Unix-domain capable gRPC transport runtime"),
+            "stdio" => new TransportListener.Stdio(),
+            "mem" => new TransportListener.Mem(),
+            "ws" or "wss" => new TransportListener.Ws(
+                parsed.Host ?? "0.0.0.0",
+                parsed.Port ?? (parsed.Secure ? 443 : 80),
+                parsed.Path ?? "/grpc",
+                parsed.Secure
+            ),
+            _ => throw new ArgumentException($"unsupported transport URI: {uri}")
+        };
+    }
+
+    private static TcpListener ListenTcp(ParsedUri parsed)
+    {
+        var host = parsed.Host ?? "0.0.0.0";
+        var port = parsed.Port ?? 9090;
+        var listener = new TcpListener(ResolveAddress(host), port);
         listener.Start();
         return listener;
+    }
+
+    private static (string host, int port) SplitHostPort(string addr, int defaultPort)
+    {
+        if (string.IsNullOrEmpty(addr))
+            return ("0.0.0.0", defaultPort);
+
+        int lastColon = addr.LastIndexOf(':');
+        if (lastColon >= 0)
+        {
+            string host = lastColon > 0 ? addr[..lastColon] : "0.0.0.0";
+            string portText = addr[(lastColon + 1)..];
+            int port = string.IsNullOrEmpty(portText) ? defaultPort : int.Parse(portText);
+            return (host, port);
+        }
+
+        return (addr, defaultPort);
+    }
+
+    private static IPAddress ResolveAddress(string host)
+    {
+        if (host == "0.0.0.0")
+            return IPAddress.Any;
+        if (host == "::")
+            return IPAddress.IPv6Any;
+        if (IPAddress.TryParse(host, out var ip))
+            return ip;
+
+        var candidates = Dns.GetHostAddresses(host);
+        if (candidates.Length == 0)
+            throw new ArgumentException($"unable to resolve host: {host}");
+        return candidates[0];
     }
 }
