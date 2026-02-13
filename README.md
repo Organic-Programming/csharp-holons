@@ -37,9 +37,9 @@ dotnet test
 | Scheme | Support |
 |--------|---------|
 | `tcp://<host>:<port>` | Bound listener (`Transport.TransportListener.Tcp`) |
-| `unix://<path>` | Parsed; runtime binding requires Unix-domain capable gRPC stack |
+| `unix://<path>` | Native runtime listener + dial (`Transport.TransportListener.Unix`, `Transport.DialUnix`) |
 | `stdio://` | Listener marker (`Transport.TransportListener.Stdio`) |
-| `mem://` | Listener marker (`Transport.TransportListener.Mem`) |
+| `mem://` | Native in-process listener + dial (`Transport.TransportListener.Mem`, `Transport.MemDial`) |
 | `ws://<host>:<port>` | Listener metadata (`Transport.TransportListener.Ws`) |
 | `wss://<host>:<port>` | Listener metadata (`Transport.TransportListener.Ws`) |
 
@@ -49,16 +49,16 @@ Implemented parity:
 
 - URI parsing and listener dispatch semantics
 - Native runtime listener for `tcp://`
+- Native runtime listener + dial for `unix://`
+- Native in-process listener + dial for `mem://`
 - Holon-RPC client protocol support over `ws://` / `wss://` (JSON-RPC 2.0, heartbeat, reconnect)
 - Standard serve flag parsing
 - HOLON identity parsing
 
 Not currently achievable in this minimal C# core (justified gaps):
 
-- `unix://` native runtime binding:
-  - Requires a Unix-domain capable gRPC runtime server stack beyond this minimal transport surface.
-- `stdio://` and `mem://` runtime listeners:
-  - gRPC .NET does not provide official stdio/memory transports equivalent to Go `net.Listener` abstractions.
+- `stdio://` runtime listener:
+  - gRPC .NET does not provide an official stdio transport equivalent to Go `net.Listener`.
 - `ws://` / `wss://` runtime listener parity:
   - No official WebSocket server transport for standard gRPC HTTP/2 framing in the core stack.
   - Exposed as metadata only.

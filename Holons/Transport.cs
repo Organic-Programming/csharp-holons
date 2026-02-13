@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Concurrent;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 
@@ -32,9 +34,46 @@ public static class Transport
     public abstract record TransportListener
     {
         public sealed record Tcp(TcpListener Socket) : TransportListener;
+        public sealed record Unix(Socket Socket, string Path) : TransportListener;
         public sealed record Stdio : TransportListener;
-        public sealed record Mem : TransportListener;
+        public sealed record Mem(MemRuntimeListener Runtime) : TransportListener;
         public sealed record Ws(string Host, int Port, string Path, bool Secure) : TransportListener;
+    }
+
+    public sealed record MemConnection(Socket Socket) : IDisposable
+    {
+        public void Dispose()
+        {
+            Socket.Dispose();
+        }
+    }
+
+    public sealed class MemRuntimeListener
+    {
+        private readonly BlockingCollection<Socket> _serverQueue = new();
+
+        public MemConnection Dial()
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+
+            var endpoint = (IPEndPoint)listener.LocalEndpoint;
+            var client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            client.Connect(endpoint);
+
+            var server = listener.AcceptSocket();
+            listener.Stop();
+
+            _serverQueue.Add(server);
+            return new MemConnection(client);
+        }
+
+        public MemConnection Accept(int timeoutMs)
+        {
+            if (!_serverQueue.TryTake(out var server, timeoutMs))
+                throw new InvalidOperationException("mem:// accept timed out");
+            return new MemConnection(server);
+        }
     }
 
     /// <summary>Parse a transport URI into a normalized structure.</summary>
@@ -92,10 +131,11 @@ public static class Transport
         return parsed.Scheme switch
         {
             "tcp" => new TransportListener.Tcp(ListenTcp(parsed)),
-            "unix" => throw new NotSupportedException(
-                "unix:// requires a Unix-domain capable gRPC transport runtime"),
+            "unix" => new TransportListener.Unix(
+                ListenUnix(parsed),
+                parsed.Path ?? throw new ArgumentException("unix path missing")),
             "stdio" => new TransportListener.Stdio(),
-            "mem" => new TransportListener.Mem(),
+            "mem" => new TransportListener.Mem(new MemRuntimeListener()),
             "ws" or "wss" => new TransportListener.Ws(
                 parsed.Host ?? "0.0.0.0",
                 parsed.Port ?? (parsed.Secure ? 443 : 80),
@@ -106,6 +146,23 @@ public static class Transport
         };
     }
 
+    public static Socket DialUnix(string uri)
+    {
+        var parsed = ParseUri(uri);
+        if (parsed.Scheme != "unix")
+            throw new ArgumentException($"DialUnix expects unix:// URI: {uri}");
+
+        var path = parsed.Path ?? throw new ArgumentException($"invalid unix URI: {uri}");
+        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        socket.Connect(new UnixDomainSocketEndPoint(path));
+        return socket;
+    }
+
+    public static MemConnection MemDial(TransportListener.Mem listener)
+    {
+        return listener.Runtime.Dial();
+    }
+
     private static TcpListener ListenTcp(ParsedUri parsed)
     {
         var host = parsed.Host ?? "0.0.0.0";
@@ -113,6 +170,18 @@ public static class Transport
         var listener = new TcpListener(ResolveAddress(host), port);
         listener.Start();
         return listener;
+    }
+
+    private static Socket ListenUnix(ParsedUri parsed)
+    {
+        var path = parsed.Path ?? throw new ArgumentException("unix path missing");
+        if (File.Exists(path))
+            File.Delete(path);
+
+        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        socket.Bind(new UnixDomainSocketEndPoint(path));
+        socket.Listen(128);
+        return socket;
     }
 
     private static (string host, int port) SplitHostPort(string addr, int defaultPort)

@@ -1,4 +1,6 @@
 ﻿using Holons;
+using System.Net.Sockets;
+using System.Text;
 
 namespace Holons.Tests;
 
@@ -55,6 +57,63 @@ public class HolonsTest
     {
         Assert.IsType<Transport.TransportListener.Stdio>(Transport.Listen("stdio://"));
         Assert.IsType<Transport.TransportListener.Mem>(Transport.Listen("mem://"));
+    }
+
+    [Fact]
+    public void UnixListenAndDialRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"holons-csharp-{Guid.NewGuid():N}.sock");
+        var uri = $"unix://{path}";
+        var lis = Assert.IsType<Transport.TransportListener.Unix>(Transport.Listen(uri));
+
+        var serverTask = Task.Run(() =>
+        {
+            using var accepted = lis.Socket.Accept();
+            var inbound = new byte[4];
+            var read = 0;
+            while (read < inbound.Length)
+                read += accepted.Receive(inbound, read, inbound.Length - read, SocketFlags.None);
+            accepted.Send(inbound, SocketFlags.None);
+        });
+
+        using var client = Transport.DialUnix(uri);
+        client.Send(Encoding.UTF8.GetBytes("ping"), SocketFlags.None);
+
+        var outbound = new byte[4];
+        var got = 0;
+        while (got < outbound.Length)
+            got += client.Receive(outbound, got, outbound.Length - got, SocketFlags.None);
+        Assert.Equal("ping", Encoding.UTF8.GetString(outbound));
+
+        serverTask.Wait(TimeSpan.FromSeconds(3));
+        lis.Socket.Dispose();
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+
+    [Fact]
+    public void MemListenAndDialRoundTrip()
+    {
+        var lis = Assert.IsType<Transport.TransportListener.Mem>(Transport.Listen("mem://"));
+
+        using var client = Transport.MemDial(lis);
+        using var server = lis.Runtime.Accept(1000);
+
+        client.Socket.Send(Encoding.UTF8.GetBytes("hola"), SocketFlags.None);
+
+        var inbound = new byte[4];
+        var read = 0;
+        while (read < inbound.Length)
+            read += server.Socket.Receive(inbound, read, inbound.Length - read, SocketFlags.None);
+        Assert.Equal("hola", Encoding.UTF8.GetString(inbound));
+
+        server.Socket.Send(inbound, SocketFlags.None);
+
+        var outbound = new byte[4];
+        var got = 0;
+        while (got < outbound.Length)
+            got += client.Socket.Receive(outbound, got, outbound.Length - got, SocketFlags.None);
+        Assert.Equal("hola", Encoding.UTF8.GetString(outbound));
     }
 
     [Fact]
