@@ -14,8 +14,8 @@ status: draft
 ---
 # csharp-holons
 
-**C# SDK for Organic Programming** — transport, serve, and identity
-utilities for building holons in C#.
+**C# SDK for Organic Programming** — transport, serve, identity,
+and Holon-RPC client utilities for building holons in C#.
 
 ## Test
 
@@ -30,6 +30,7 @@ dotnet test
 | `Transport` | `ParseUri(uri)`, `Listen(uri)`, `Scheme(uri)` |
 | `Serve` | `ParseFlags(args)` |
 | `IdentityParser` | `ParseHolon(path)` |
+| `HolonRPCClient` | `ConnectAsync(url)`, `InvokeAsync(method, params)`, `Register(method, handler)`, `CloseAsync()` |
 
 ## Transport support
 
@@ -48,6 +49,7 @@ Implemented parity:
 
 - URI parsing and listener dispatch semantics
 - Native runtime listener for `tcp://`
+- Holon-RPC client protocol support over `ws://` / `wss://` (JSON-RPC 2.0, heartbeat, reconnect)
 - Standard serve flag parsing
 - HOLON identity parsing
 
@@ -60,5 +62,6 @@ Not currently achievable in this minimal C# core (justified gaps):
 - `ws://` / `wss://` runtime listener parity:
   - No official WebSocket server transport for standard gRPC HTTP/2 framing in the core stack.
   - Exposed as metadata only.
-- Transport-agnostic gRPC client helpers (`Dial`, `DialStdio`, `DialMem`, `DialWebSocket`):
-  - Requires a dedicated .NET gRPC adapter layer that is not yet included.
+- Full gRPC transport parity (`Dial("tcp://...")`, `Dial("stdio://...")`, `Listen("stdio://...")`, and `Serve.Run()` wiring):
+  - `Grpc.Net` does not expose an official stdio transport equivalent to Go `net.Listener`.
+  - A complete `serve.Run()` equivalent requires additional reflection/signal/runtime orchestration not yet included in this SDK core.
