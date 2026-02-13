@@ -62,6 +62,9 @@ Not currently achievable in this minimal C# core (justified gaps):
 - `ws://` / `wss://` runtime listener parity:
   - No official WebSocket server transport for standard gRPC HTTP/2 framing in the core stack.
   - Exposed as metadata only.
+- gRPC `Dial("ws://...")` / `Dial("wss://...")`:
+  - `Grpc.Net` does not provide an official WebSocket tunnel transport for raw HTTP/2 gRPC frames.
+  - A production implementation requires a custom proxy/bridge layer outside this minimal core.
 - Full gRPC transport parity (`Dial("tcp://...")`, `Dial("stdio://...")`, `Listen("stdio://...")`, and `Serve.Run()` wiring):
   - `Grpc.Net` does not expose an official stdio transport equivalent to Go `net.Listener`.
   - A complete `serve.Run()` equivalent requires additional reflection/signal/runtime orchestration not yet included in this SDK core.
