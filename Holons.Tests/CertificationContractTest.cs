@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json.Nodes;
 
 namespace Holons.Tests;
 
@@ -7,12 +8,14 @@ public class CertificationContractTest
     [Fact]
     public void CertJsonDeclaresLevel1ExecutablesAndDialCapabilities()
     {
-        var cert = File.ReadAllText(Path.Combine(ProjectRoot(), "cert.json"));
+        var certText = File.ReadAllText(Path.Combine(ProjectRoot(), "cert.json"));
+        var cert = JsonNode.Parse(certText)?.AsObject()
+            ?? throw new InvalidOperationException("cert.json must be a JSON object");
 
-        Assert.Contains("\"echo_server\": \"./bin/echo-server\"", cert);
-        Assert.Contains("\"echo_client\": \"./bin/echo-client\"", cert);
-        Assert.Contains("\"grpc_dial_tcp\": true", cert);
-        Assert.Contains("\"grpc_dial_stdio\": true", cert);
+        Assert.Equal("./bin/echo-server", cert["executables"]?["echo_server"]?.GetValue<string>());
+        Assert.Equal("./bin/echo-client", cert["executables"]?["echo_client"]?.GetValue<string>());
+        Assert.True(cert["capabilities"]?["grpc_dial_tcp"]?.GetValue<bool>());
+        Assert.True(cert["capabilities"]?["grpc_dial_stdio"]?.GetValue<bool>());
     }
 
     [Fact]
