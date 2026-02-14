@@ -4,3 +4,9 @@
 !/bin/echo-client
 !/bin/echo-server
 bin/
+
+obj/
+
+*.suo
+
+*.user
