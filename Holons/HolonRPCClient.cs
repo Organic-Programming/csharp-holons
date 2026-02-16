@@ -506,8 +506,9 @@ public sealed class HolonRPCClient : IAsyncDisposable
     private void StartHeartbeat()
     {
         CancelHeartbeat();
-        _heartbeatCts = new CancellationTokenSource();
-        var ct = _heartbeatCts.Token;
+        var heartbeatCts = new CancellationTokenSource();
+        var ct = heartbeatCts.Token;
+        _heartbeatCts = heartbeatCts;
 
         _heartbeatTask = Task.Run(async () =>
         {
@@ -554,20 +555,21 @@ public sealed class HolonRPCClient : IAsyncDisposable
 
     private void CancelHeartbeat()
     {
-        if (_heartbeatCts is not null)
+        var heartbeatCts = Interlocked.Exchange(ref _heartbeatCts, null);
+        if (heartbeatCts is not null)
         {
             try
             {
-                _heartbeatCts.Cancel();
+                heartbeatCts.Cancel();
             }
             catch
             {
                 // ignored
             }
-            _heartbeatCts.Dispose();
-            _heartbeatCts = null;
+            heartbeatCts.Dispose();
         }
-        _heartbeatTask = null;
+
+        Interlocked.Exchange(ref _heartbeatTask, null);
     }
 
     private async Task WaitConnectedAsync(int timeoutMs, CancellationToken cancellationToken)

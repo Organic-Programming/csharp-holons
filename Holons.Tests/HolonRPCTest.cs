@@ -90,6 +90,38 @@ public class HolonRPCTest
         });
     }
 
+    [Fact]
+    public async Task HolonRpcCloseAsyncIsSafeWhenCalledConcurrently()
+    {
+        await WithGoHolonRpcServer("echo", async url =>
+        {
+            await using var client = new HolonRPCClient(
+                heartbeatIntervalMs: 200,
+                heartbeatTimeoutMs: 200,
+                reconnectMinDelayMs: 100,
+                reconnectMaxDelayMs: 400);
+
+            await client.ConnectAsync(url);
+
+            var result = await client.InvokeAsync(
+                "echo.v1.Echo/Ping",
+                new JsonObject { ["message"] = "close-race" });
+            Assert.Equal("close-race", result["message"]?.GetValue<string>());
+
+            using var release = new ManualResetEventSlim(false);
+            var closeTasks = Enumerable.Range(0, 16)
+                .Select(_ => Task.Run(async () =>
+                {
+                    release.Wait();
+                    await client.CloseAsync();
+                }))
+                .ToArray();
+
+            release.Set();
+            await Task.WhenAll(closeTasks);
+        });
+    }
+
     private static async Task<JsonObject> InvokeEventually(
         HolonRPCClient client,
         string method,
